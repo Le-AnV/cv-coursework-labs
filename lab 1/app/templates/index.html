@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Image Processor</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>Image Processor</h1>
+      <p class="subtitle">
+        Simple image operations — crop, resize, convert to grayscale.
+      </p>
+
+      <div class="grid-layout">
+        <div class="left-column">
+          <section class="panel upload-panel">
+            <div id="dropZone" class="drop-zone">
+              <label class="upload-label"
+                >Select or drag an image
+                <input type="file" id="imageInput" accept="image/*" />
+              </label>
+              <div class="drop-hint">Drop image here or click to select</div>
+            </div>
+            <div id="origPreview" class="preview"></div>
+            <div id="origInfo" class="meta"></div>
+          </section>
+
+          <section class="panel action-panel">
+            <label for="actionSelect">Action</label>
+            <select id="actionSelect">
+              <option value="GRAYSCALE">Convert → Grayscale</option>
+              <option value="CROP">Crop</option>
+              <option value="RESIZE">Resize</option>
+            </select>
+
+            <div id="cropControls" class="controls hidden">
+              <input type="number" id="cropX" placeholder="x" />
+              <input type="number" id="cropY" placeholder="y" />
+              <input type="number" id="cropW" placeholder="width" />
+              <input type="number" id="cropH" placeholder="height" />
+              <div class="meta">
+                <small id="cropHint"
+                  >Enter coordinates inside original image bounds.</small
+                >
+              </div>
+            </div>
+
+            <div id="resizeControls" class="controls hidden">
+              <input type="number" id="resizeW" placeholder="width" />
+              <input type="number" id="resizeH" placeholder="height" />
+              <label
+                ><input type="checkbox" id="keepRatio" /> Keep aspect</label
+              >
+            </div>
+
+            <button id="processBtn">Process</button>
+          </section>
+        </div>
+
+        <div class="right-column">
+          <section class="panel result">
+            <h2>Result</h2>
+            <div id="resultPreview" class="preview"></div>
+            <div id="info"></div>
+            <button id="downloadBtn" disabled>Download</button>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      const imageInput = document.getElementById("imageInput");
+      const origPreview = document.getElementById("origPreview");
+      const actionSelect = document.getElementById("actionSelect");
+      const cropControls = document.getElementById("cropControls");
+      const resizeControls = document.getElementById("resizeControls");
+      const processBtn = document.getElementById("processBtn");
+      const resultPreview = document.getElementById("resultPreview");
+      const info = document.getElementById("info");
+      const downloadBtn = document.getElementById("downloadBtn");
+
+      let lastResultBase64 = "";
+
+      function showPreview(el, src) {
+        el.innerHTML = "";
+        const img = document.createElement("img");
+        img.src = src;
+        el.appendChild(img);
+      }
+
+      imageInput.addEventListener("change", (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        const url = URL.createObjectURL(f);
+        showPreview(origPreview, url);
+        // show original image size
+        const temp = new Image();
+        temp.onload = () => {
+          const w = temp.naturalWidth;
+          const h = temp.naturalHeight;
+          document.getElementById("origInfo").textContent =
+            `Original: ${w} x ${h} px`;
+          // set crop input limits
+          const cx = document.getElementById("cropX");
+          const cy = document.getElementById("cropY");
+          const cw = document.getElementById("cropW");
+          const ch = document.getElementById("cropH");
+          if (cx && cy && cw && ch) {
+            cx.max = Math.max(0, w - 1);
+            cy.max = Math.max(0, h - 1);
+            cw.max = w;
+            ch.max = h;
+            // prefill reasonable defaults
+            cw.value = Math.min(200, w);
+            ch.value = Math.min(200, h);
+            cx.value = 0;
+            cy.value = 0;
+          }
+        };
+        temp.src = url;
+      });
+
+      // drag and drop support
+      const dropZone = document.getElementById("dropZone");
+      if (dropZone) {
+        dropZone.addEventListener("dragover", (ev) => {
+          ev.preventDefault();
+          dropZone.classList.add("dragover");
+        });
+        dropZone.addEventListener("dragleave", () =>
+          dropZone.classList.remove("dragover"),
+        );
+        dropZone.addEventListener("drop", (ev) => {
+          ev.preventDefault();
+          dropZone.classList.remove("dragover");
+          const f =
+            ev.dataTransfer &&
+            ev.dataTransfer.files &&
+            ev.dataTransfer.files[0];
+          if (!f) return;
+          const input = document.getElementById("imageInput");
+          const dt = new DataTransfer();
+          dt.items.add(f);
+          input.files = dt.files;
+          const url = URL.createObjectURL(f);
+          showPreview(origPreview, url);
+          // trigger change handler to set sizes
+          input.dispatchEvent(new Event("change"));
+        });
+      }
+
+      actionSelect.addEventListener("change", () => {
+        const v = actionSelect.value;
+        cropControls.classList.toggle("hidden", v !== "CROP");
+        resizeControls.classList.toggle("hidden", v !== "RESIZE");
+      });
+
+      processBtn.addEventListener("click", async () => {
+        const f = imageInput.files && imageInput.files[0];
+        if (!f) {
+          alert("Select an image");
+          return;
+        }
+        const fd = new FormData();
+        fd.append("image", f);
+        fd.append("action", actionSelect.value);
+        if (actionSelect.value === "CROP") {
+          fd.append("x", document.getElementById("cropX").value);
+          fd.append("y", document.getElementById("cropY").value);
+          fd.append("width", document.getElementById("cropW").value);
+          fd.append("height", document.getElementById("cropH").value);
+        }
+        if (actionSelect.value === "RESIZE") {
+          fd.append("width", document.getElementById("resizeW").value);
+          fd.append("height", document.getElementById("resizeH").value);
+          fd.append("keep_ratio", document.getElementById("keepRatio").checked);
+        }
+
+        processBtn.disabled = true;
+        const res = await fetch("/process", { method: "POST", body: fd });
+        processBtn.disabled = false;
+        if (!res.ok) {
+          const err = await res.json();
+          alert(err.error || "Processing error");
+          return;
+        }
+        const data = await res.json();
+        lastResultBase64 = data.image_base64;
+        showPreview(resultPreview, data.image_base64);
+        info.innerHTML = `<span class="info-badge">Result: ${data.width} x ${data.height}</span>`;
+        downloadBtn.disabled = false;
+      });
+
+      downloadBtn.addEventListener("click", async () => {
+        if (!lastResultBase64) return;
+        const res = await fetch("/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_base64: lastResultBase64 }),
+        });
+        if (!res.ok) {
+          alert("Download failed");
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "result.png";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      });
+    </script>
+  </body>
+</html>
